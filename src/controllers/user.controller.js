@@ -1,9 +1,9 @@
+import jwt from "jsonwebtoken"
 import { User } from "../models/user.model.js";
 import { APIerror } from "../utils/APIerror.js";
 import { APIresponse } from "../utils/APIresponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { uploadOnCloudinary } from "../utils/Cloudinary.js";
-import jwt from "jsonwebtoken"
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -169,5 +169,5 @@ const refreshAccessToken = asyncHandler(async(req,res)=>{
     )
  
    
-})
+});
 export { registerUser, loginUser, logoutUser,refreshAccessToken };
