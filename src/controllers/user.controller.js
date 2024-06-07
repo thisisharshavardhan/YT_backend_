@@ -1,9 +1,10 @@
-import jwt from "jsonwebtoken"
+import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
 import { APIerror } from "../utils/APIerror.js";
 import { APIresponse } from "../utils/APIresponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { uploadOnCloudinary } from "../utils/Cloudinary.js";
+import multer from "multer";
 
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
@@ -22,7 +23,6 @@ const generateAccessAndRefreshTokens = async (userId) => {
 };
 
 const registerUser = asyncHandler(async (req, res) => {
-
   const { username, password, email, fullname } = req.body;
   if (
     [username, password, email, fullname].some((field) => field?.trim() === "")
@@ -78,7 +78,7 @@ const loginUser = asyncHandler(async (req, res) => {
   // get username and password from the frontend
   // check if they are correct
   // generate refresh and access token
-  const { email, username, password } =await req.body;
+  const { email, username, password } = await req.body;
   if (!(email || username)) {
     throw new APIerror(400, "username or email is required");
   }
@@ -101,9 +101,9 @@ const loginUser = asyncHandler(async (req, res) => {
     user._id
   );
 
-  const logedInUser = await User
-    .findById(user._id)
-    .select("-password -refreshToken");
+  const logedInUser = await User.findById(user._id).select(
+    "-password -refreshToken"
+  );
 
   const options = {
     httpOnly: true,
@@ -127,47 +127,141 @@ const loginUser = asyncHandler(async (req, res) => {
 });
 
 const logoutUser = asyncHandler(async (req, res) => {
-  await User.findByIdAndUpdate(req.user._id,{
-    $set:{
-      refreshToken: undefined
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        refreshToken: undefined,
+      },
+    },
+    {
+      new: true,
     }
-  },{
-    new: true
-  })
+  );
   const options = {
     httpOnly: true,
     secure: true,
   };
 
-  return res.status(200).clearCookie("accessToken",options).clearCookie("refreshToken",options).json(
-    new APIresponse(200,"","User logged Out")
+  return res
+    .status(200)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken", options)
+    .json(new APIresponse(200, "", "User logged Out"));
+});
+
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  const incomingRefreshToken =
+    req.cokkies?.refreshToken || req.body?.refreshToken;
+  if (!incomingRefreshToken) {
+    throw new APIerror(400, "Unauthorised Request");
+  }
+
+  const decodedToken = jwt.verify(
+    incomingRefreshToken,
+    process.env.REFRESH_TOKEN_SECRET
+  );
+  const user = await User.findById(decodedToken?._id);
+  if (!user) {
+    throw new APIerror(400, "Invalid refresh token");
+  }
+  if (incomingRefreshToken !== user?.refreshToken) {
+    throw new APIerror(400, "Refresh token invalid");
+  }
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
+  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
+    user._id
+  );
+
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refreshToken, options)
+    .json(
+      new APIresponse(
+        200,
+        "Access token generated using refresh token",
+        "Access token generated using refresh token"
+      )
+    );
+});
+
+const changeCurrentPassword = asyncHandler(async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) {
+    throw new APIerror(400, "old and new password required");
+  }
+  const user = await User.findById(req.user._id)
+  if ( !await user.isPasswordCorrect(oldPassword)) {
+   throw new APIerror(400,"Old password was Incorrect")
+  }
+
+  user.password = newPassword
+  await user.save({validateBeforeSave:false})
+  return res.status(200).json(
+    new APIresponse(200,"","password changed successfully")
   )
 });
 
-const refreshAccessToken = asyncHandler(async(req,res)=>{
-  const incomingRefreshToken = req.cokkies?.refreshToken || req.body?.refreshToken
-  if(!incomingRefreshToken){
-    throw new APIerror(400,"Unauthorised Request")
+const getCurrentUser = asyncHandler(async(req,res)=>{
+  const user = req.user
+  return res.status(200).json(
+    new APIresponse(200,user,"Current User details get successfull")
+  )
+})
+
+const updateUserDetails = asyncHandler(async(req,res)=>{
+  const {fullName,email} =req.body
+  if(!fullName || !email){
+    throw new APIerror(400,"fullname and email are required")
   }
-  
-    const decodedToken = jwt.verify(incomingRefreshToken,process.env.REFRESH_TOKEN_SECRET)
-    const user = await User.findById(decodedToken?._id)
-    if(!user){
-      throw new APIerror(400,"Invalid refresh token")
+  const user = User.findByIdAndUpdate(
+    req.user?._id,
+    {
+      $set:{
+        fullName,
+        email
+      }
+    },
+    {
+      new:true
     }
-    if(incomingRefreshToken !== user?.refreshToken){
-      throw new APIerror(400,"Refresh token invalid")
+  ).select("-password -refreshToken")
+  return res.status(200).json(
+    new APIresponse(200,user,"Details Updated Successfully")
+  )
+})
+
+const updateAvatar = asyncHandler(async(req,res)=>{
+  if(!req.file?.path){
+    throw new APIerror(400,"File is required")
+  }
+
+  const path = req.file?.path
+  const response = await uploadOnCloudinary(path)
+  if(!response.url){
+    throw new APIerror(400,"File upload failed")
+  }
+  await User.findByIdAndUpdate(req.user._id,
+    {
+      $set:{
+        avatar:response.url
+      }
     }
-    const options = {
-      httpOnly:true,
-      secure:true
-    }
-    const {accessToken,refreshToken} = await generateAccessAndRefreshTokens(user._id)
-  
-    return res.status(200).cookie("accessToken",accessToken,options).cookie("refreshToken",refreshToken,options).json(
-      new APIresponse(200,"Access token generated using refresh token","Access token generated using refresh token")
-    )
- 
-   
-});
-export { registerUser, loginUser, logoutUser,refreshAccessToken };
+  )
+  return res.status(200,"Image uploaded Successfully")
+})
+
+export {
+  registerUser,
+  loginUser,
+  logoutUser,
+  refreshAccessToken,
+  changeCurrentPassword,
+  getCurrentUser,
+  updateUserDetails,
+  updateAvatar
+};
